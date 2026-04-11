@@ -41,6 +41,7 @@ jobs:
       - name: Run cocotb simulation
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          PYTHONPATH: ${{ github.workspace }}/python
         run: |
           make
 
