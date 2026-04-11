@@ -115,10 +115,11 @@ git push -u origin main
 -- 初期登録の完了後
 --------------------------------------
 git add .
-git commit -m "test_aes.py"
+git commit -m "verify.yml(2nd)"
 git push -u origin main
 
 
+git commit -m "test_aes.yml(2nd)"
 
 --------------------------------------
 

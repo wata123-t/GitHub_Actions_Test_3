@@ -17,7 +17,8 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./credentials/bq-writer.json"
 def send_to_bigquery_batch(results):
     #key_path = os.path.join(os.path.dirname(__file__), "credentials/bq-writer.json")
     #credentials = service_account.Credentials.from_service_account_file(key_path)
-    client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+    #client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+    client = bigquery.Client()
 
     table_id = f"{credentials.project_id}.aes_verification_dataset.verification_results"
 
