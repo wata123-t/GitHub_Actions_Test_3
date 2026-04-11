@@ -115,7 +115,7 @@ git push -u origin main
 -- 初期登録の完了後
 --------------------------------------
 git add .
-git commit -m "verify.yml(2nd)"
+git commit -m "verify.yml(3rd)"
 git push -u origin main
 
 

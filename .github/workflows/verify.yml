@@ -37,6 +37,22 @@ jobs:
         run: |
           pip install cocotb google-cloud-bigquery pycryptodome dbt-bigquery
 
+
+      # --- Terraform 実行---
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init & Apply
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          terraform init
+          # 変数を直接渡して、自動で「yes」と答えて実行
+          terraform apply -auto-approve \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="region=asia-northeast1" \
+            -var="dataset_id=aes_verification_dataset"
+
       # 4. cocotb シミュレーション実行 (BigQueryへのデータ送信)
       - name: Run cocotb simulation
         env:
