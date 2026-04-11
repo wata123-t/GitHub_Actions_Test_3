@@ -72,3 +72,11 @@ jobs:
           dbt debug # 接続確認
           dbt run --full-refresh
           dbt test
+
+      # 最後にリソースを削除したい場合（任意）
+      - name: Terraform Destroy
+        if: always() # 前のステップが失敗しても必ず実行する設定
+        run: |
+          cd ./terraform
+          terraform destroy -auto-approve \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}"
