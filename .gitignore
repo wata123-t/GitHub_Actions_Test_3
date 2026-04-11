@@ -1,0 +1,18 @@
+# GCPの鍵ファイル（絶対に上げない！）
+python/credentials/*.json
+
+# DockerやPythonのキャッシュ
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# dbt関連（aes_dbtディレクトリ配下を指定）
+aes_dbt/target/
+aes_dbt/dbt_packages/
+aes_dbt/logs/
+
+# Terraformのローカル状態
+.terraform/
+*.tfstate
+*.tfstate.backup
+terraform.tfvars

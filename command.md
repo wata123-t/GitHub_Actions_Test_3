@@ -1,0 +1,121 @@
+
+
+//////////////////////////////////////////////////////////////////////////////
+// ●1. シミュレーション実行（データの蓄積）
+//////////////////////////////////////////////////////////////////////////////
+
+これまで通り実行します。これにより BigQuery に生データが送られます。
+
+>docker compose build
+
+--------------------------------------
+#!/bin/bash
+--------------------------------------
+# 1. 検証実行
+--------------------------------------
+docker compose up aes-verify
+
+docker compose down
+aes-verify が終了したら、docker compose down または Ctrl+C で一旦停止してOKです。
+
+//////////////////////////////////////////////////////////////////////////////
+// ●DBT 環境の作成(初回のみ)
+//////////////////////////////////////////////////////////////////////////////
+Simulation 結果を書くの後に、dbt 環境を作成する
+
+TOPディレクトリにて
+
+>docker compose run --rm dbt init . --skip-profile-setup
+>
+
+もしくは
+
+>docker compose run --rm dbt init aes_dbt --skip-profile-setup
+
+-----
+実行後に確認すること
+aes_dbt フォルダの中に、以下のファイルやフォルダが生成されていれば成功です！
+dbt_project.yml
+models/
+seeds/
+snapshots/
+tests/
+
+
+//////////////////////////////////////////////////////////////////////////////
+// ●１. dbtがプロジェクト構成を正しく認識できているか確認
+//////////////////////////////////////////////////////////////////////////////
+docker compose run --rm dbt debug
+→最後は、いらない
+
+//////////////////////////////////////////////////////////////////////////////
+// ●2. 分析実行
+//////////////////////////////////////////////////////////////////////////////
+
+# 
+>docker compose run --rm dbt run
+
+今は一つエラーで通らない。
+
+//////////////////////////////////////////////////////////////////////////////
+// ● 3. 合否判定
+//////////////////////////////////////////////////////////////////////////////
+
+####			1.パッケージのインストール:
+####			>docker compose run --rm dbt deps
+####			→これは不要と思われる
+####			
+####			4. 合否判定の実行
+####			# まずモデルを更新
+####			>docker compose run --rm dbt dbt run
+
+# テスト実行！
+>docker compose run --rm dbt test
+
+
+
+-------------------------------------------------------------------------------
+--全消しコマンド
+-------------------------------------------------------------------------------
+docker compose down
+docker compose down --rmi all
+docker system prune -a
+
+
+
+
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////// ｄｂｔ コマンド
+
+docker compose run --rm aes-verify sh -c "cd sql && dbt debug --profiles-dir ."
+
+//////////////////////////////////////////////////////////// git コマンド
+
+
+git init
+git add .
+git commit -m "Initial commit: AES-128 Verification Pipeline with cocotb and BigQuery"
+
+git branch -M main
+
+--------------
+git remote set-url origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
+git remote origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
+git remote add origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
+--------------
+
+git push -u origin main
+
+
+
+
+
+
+

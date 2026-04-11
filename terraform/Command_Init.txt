@@ -1,0 +1,35 @@
+
+#Google Cloud 認証: ターミナルで 
+gcloud auth application-default login
+
+# 1. 初期化: ターミナルで以下を実行し、Google Cloud用のプラグインを読み込みます。
+terraform init
+
+# 2. 計画確認: 何が作成されるか確認します。
+terraform plan
+
+# 3. 反映: 実際にGoogle Cloud上に作成します。
+terraform apply
+
+
+# functionディレクトリをデプロイする際に使用する
+terraform init -upgrade
+
+
+# フォーマット: projects/{{project}}/locations/{{region}}/functions/{{name}}
+terraform import google_cloudfunctions2_function.worker projects/acquired-shape-470706-k0/locations/asia-northeast1/functions/worker-process
+
+
+
+https://slack-to-bq-541387013165.asia-northeast1.run.app
+https://asia-northeast1-acquired-shape-470706-k0.cloudfunctions.net/slack-receiver
+
+
+
+
+GCP Python BigQuery GoogleCloudFunctions SlackAPI
+GCP （プラットフォーム全体を示す必須タグ）
+GoogleCloudFunctions （メインの実行環境）
+BigQuery （データ分析・蓄積のコア）
+SlackAPI （インターフェースとしての特徴）
+Python （使用

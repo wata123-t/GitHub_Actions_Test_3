@@ -1,0 +1,4 @@
+cocotb
+pycryptodome
+google-cloud-bigquery
+dbt-bigquery

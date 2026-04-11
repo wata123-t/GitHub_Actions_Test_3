@@ -1,0 +1,21 @@
+services:
+  aes-verify:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/app  # ← ここでローカルの「今いる場所」をコンテナの /app に同期します
+    working_dir: /app # ← 作業ディレクトリを明示的に指定
+
+  # ★ dbtサービスを追加
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-bigquery:latest
+    volumes:
+      - .:/app  # プロジェクト全体をマウント
+    environment:
+      # プロジェクト内の dbt フォルダを指すように設定
+      - DBT_PROFILES_DIR=/app/aes_dbt
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/python/credentials/bq-writer.json
+    working_dir: /app/aes_dbt
+    
+    

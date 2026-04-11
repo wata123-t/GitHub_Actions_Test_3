@@ -1,0 +1,12 @@
+# aes_dbt/profiles.yml
+aes_dbt:  # ← dbt_project.ymlのprofile名と合わせる
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: "acquired-shape-470706-k0" 
+      dataset: aes_verification_dataset
+      threads: 1
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS', '/app/python/credentials/bq-writer.json') }}"
+      location: asia-northeast1

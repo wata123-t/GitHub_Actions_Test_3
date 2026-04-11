@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: aes_raw
+    project: "acquired-shape-470706-k0"
+    dataset: aes_verification_dataset
+    tables:
+      - name: verification_results
