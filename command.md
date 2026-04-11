@@ -99,6 +99,9 @@ docker compose run --rm aes-verify sh -c "cd sql && dbt debug --profiles-dir ."
 //////////////////////////////////////////////////////////// git コマンド
 
 
+--------------------------------------
+-- 初期登録時
+--------------------------------------
 git init
 git add .
 git commit -m "Initial commit: AES-128 Verification Pipeline with cocotb and BigQuery"
@@ -108,18 +111,16 @@ git branch -M main
 git push -u origin main
 
 
-
-
-
---------------
-git remote set-url origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
-git remote origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
-git remote add origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
---------------
-
+--------------------------------------
+-- 初期登録の完了後
+--------------------------------------
+git add .
+git commit -m "test_aes.py"
 git push -u origin main
 
 
+
+--------------------------------------
 
 
 
