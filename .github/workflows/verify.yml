@@ -42,10 +42,7 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
-          # Pythonソースがあるディレクトリへ移動（Makefileがある場所）
-          cd python 
           make
-          # ※ Makefileがない場合は直接コマンド: cocotb-config --make-lib ... 等
 
       # 5. dbt 実行 & テスト
       - name: Run dbt models and tests

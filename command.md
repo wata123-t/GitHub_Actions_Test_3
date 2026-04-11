@@ -103,7 +103,13 @@ git init
 git add .
 git commit -m "Initial commit: AES-128 Verification Pipeline with cocotb and BigQuery"
 
+git remote add origin https://github.com/wata123-t/GitHub_Actions_Test_3.git
 git branch -M main
+git push -u origin main
+
+
+
+
 
 --------------
 git remote set-url origin https://github.com/wata123-t/GitHub_Actions_Test_2.git
