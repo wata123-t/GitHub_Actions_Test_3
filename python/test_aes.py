@@ -12,7 +12,7 @@ from Crypto.Cipher import AES
 import random
 import datetime
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./credentials/bq-writer.json"
+#os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./credentials/bq-writer.json"
 
 def send_to_bigquery_batch(results):
     #key_path = os.path.join(os.path.dirname(__file__), "credentials/bq-writer.json")
