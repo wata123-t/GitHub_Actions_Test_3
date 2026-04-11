@@ -20,7 +20,8 @@ def send_to_bigquery_batch(results):
     #client = bigquery.Client(credentials=credentials, project=credentials.project_id)
     client = bigquery.Client()
 
-    table_id = f"{credentials.project_id}.aes_verification_dataset.verification_results"
+    #table_id = f"{credentials.project_id}.aes_verification_dataset.verification_results"
+    table_id = f"{client.project}.aes_verification_dataset.verification_results"
 
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
