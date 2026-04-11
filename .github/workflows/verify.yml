@@ -46,6 +46,7 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
+          cd ./terraform
           terraform init
           # 変数を直接渡して、自動で「yes」と答えて実行
           terraform apply -auto-approve \
