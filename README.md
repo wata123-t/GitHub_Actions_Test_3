@@ -14,6 +14,39 @@
 |[6.実行結果](#6実行結果)|
 |[7.まとめ](#7まとめ)|
 
+```mermaid
+graph TD
+    subgraph Public_Internet
+        User([User / k6])
+    end
+
+    subgraph GCP_Project
+        subgraph GKE_Cluster
+            LB[GCP LoadBalancer]
+            
+            subgraph Go_API_Pod_Group
+                HPA_Go[HPA] --> Go[Go API: Gin]
+                Go --> |Structured Log| CL[Cloud Logging]
+            end
+
+            subgraph Python_OCR_Pod_Group
+                HPA_Py[HPA] --> Py[Python API: EasyOCR]
+                Py --> |Structured Log| CL
+            end
+
+            LB --> Go
+            Go --> |gRPC / Client-side LB| Py
+        end
+
+        subgraph Data_Analytics
+            CL --> |Log Sink| BQ[(BigQuery)]
+        end
+    end
+
+    style GKE_Cluster fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style Data_Analytics fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+```
+
 
 ```mermaid
 graph TD
