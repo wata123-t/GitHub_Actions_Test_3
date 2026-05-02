@@ -15,6 +15,39 @@
 |[7.まとめ](#7まとめ)|
 
 
+```mermaid
+graph TD
+    subgraph 外部環境
+        A[k6 / テスト端末]
+    end
+
+    subgraph GKEクラスター
+        B[Go API Pod]
+        C[Python OCR Pod 1]
+        D[Python OCR Pod 2]
+        E[Python OCR Pod 3]
+        
+        B -- gRPC / Round Robin --> C
+        B -- gRPC / Round Robin --> D
+        B -- gRPC / Round Robin --> E
+        
+        F[HPA / 自動スケール] -. 監視・増減 .-> C
+        F -. 監視・増減 .-> D
+        F -. 監視・増減 .-> E
+    end
+
+    subgraph GCPサービス
+        B -- 構造化ログ --> G[Cloud Logging]
+        C -- 構造化ログ --> G
+        G -- ログシンク --> H[(BigQuery)]
+    end
+
+    A -- HTTP POST 画像送信 --> B
+```
+
+
+
+
 # 2.技術スタックとシステム構成
 
 ## 2-1.技術スタック
