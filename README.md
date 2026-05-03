@@ -1,18 +1,71 @@
 # 1.はじめに
-本記事では、共通鍵暗号方式のデファクトスタンダードである「AES-128」を題材に、Verilog HDL によるハードウェアモデルと、Python によるソフトウェアライブラリを組み合わせた「協調検証環境」の構築について解説します。
-具体的には、検証フレームワーク **cocotb** を介してPythonからハードウェアモデルを制御・テストし、出力された膨大な検証結果を **BigQuery** へ集約。さらに **dbt** を用いて動作確認や入力パターンの詳細な解析を行いました。
-本内容は、先に公開した記事『AES-128 設計を GitHub Actions で自動化：BigQueryとdbtを使用したデータ解析』で構築したパイプラインを、より深掘りするために作成しました。
+前回の記事で、GoとPythonをgRPCで繋ぎ、GKE上にスケーラブルなOCR基盤を構築し、そのポイントを説明しました。
+本記事では、そのプロジェクト詳細を説明します。
 
 
 | ◆構成 |
 |:---------------|
 |[1.はじめに](#1はじめに) |
 |[2.技術スタックとシステム構成](#2技術スタックとシステム構成)|
-|[3.cocotbによる検証とデータ収集](#3cocotbによる検証とデータ収集)|
-|[4.dbtによる分析](#4dbtによる分析)|
-|[5.実行方法](#5実行方法)|
-|[6.実行結果](#6実行結果)|
-|[7.まとめ](#7まとめ)|
+|[3.「GitHub ActionsによるCIの自動化」の環境構築](#3github-actionsによるciの自動化の環境構築)|
+|[4.「GitHub Actions」の実行方法](#4github-actionsの実行方法)|
+|[5.実行結果](#5実行結果)|
+|[6.まとめ](#6まとめ)|
+
+# 2.技術スタックとシステム構成
+
+## 2-1. 技術スタック
+
+本システムでは、以下の技術スタックを採用しています。
+
+
+| カテゴリ | 技術・ツール | 用途 |
+| :--- | :--- | :--- |
+| **Frontend API** | **Go (Gin)** | HTTPリクエスト受付、gRPCクライアント、構造化ログ出力 |
+| **Inference Engine** | **Python (EasyOCR)** | gRPCサーバー、EasyOCRによる文字認識処理 |
+| **Communication** | **gRPC / Protocol Buffers** | Go-Python間の高速・型安全なマイクロサービス通信 |
+| **Infrastructure** | **GKE (Standard)** | コンテナオーケストレーション、HPAによるオートスケーリング |
+| **IaC** | **Terraform** | VPC, GKE, Artifact Registry, Log Sinkのコード管理 |
+| **Observability** | **Cloud Logging / BigQuery** | 構造化ログの集約、およびSQLによる推論精度・性能分析 |
+| **Testing** | **k6** | 期待値（正解データ）を用いた高負荷・精度検証試験 |
+
+
+
+
+
+### 2-2. 主要ライブラリ
+特に注目すべき採用ライブラリは以下の通りです。
+
+| 対象 | ライブラリ | 採用理由 |
+| :--- | :--- | :--- |
+| **Go** | **Gin** | 軽量かつ高速で、構造化ログとの相性が良いため。 |
+| **Go** | **gopsutil** | Pod内のリソース使用率をログに含め、分析に活用するため。 |
+| **Python** | **EasyOCR** | PyTorchベースで精度が高く、日本語・英語に標準対応しているため。 |
+| **Python** | **psutil** | 推論時のCPU負荷を正確に計測し、ログ出力するため。 |
+| **Common** | **gRPC** | HTTP/1.1よりも低遅延で、双方向通信やストリーミングにも対応可能なため。 |
+
+
+
+## 2-3. ディレクトリ構成
+インフラ管理（Terraform）コマンドで、デプロイできる以下の構成となっています。
+このデータセットは、GitHubレポジトリ登録しています。
+
+https://github.com/wata123-t/AES-128_GitHub_Actions
+
+```text
+.
+├── terraform/          # GKE, VPC, Artifact Registry, Log Sinkの定義
+├── chart/              # Kubernetesデプロイ用リソース (Helm Chart形式)
+│   └── templates/      # Deployment, Service, HPA, RBACのマニフェスト
+├── go-api/             # フロントエンドAPI (Go / Gin)
+├── python-api/         # 推論エンジン (Python / EasyOCR / gRPC Server)
+├── pb/                 # gRPC定義ファイル (.proto) と自動生成コード
+└── k6/                 # 負荷試験スクリプト
+    └── test_images/    # 検証用画像および正解データ(mapping.json)
+```
+
+## 2-3. システム構成
+本プロジェクトは、設計・検証・分析の各工程を GitHub Actions で統合しています。全体のデータの流れと、各記事の解説範囲は以下の通りです。
 
 ```mermaid
 graph TD
@@ -46,505 +99,564 @@ graph TD
     style GKE_Cluster fill:#f9f9f9,stroke:#333,stroke-width:2px
     style Data_Analytics fill:#e1f5fe,stroke:#01579b,stroke-width:2px
 ```
+### <ins>_◆関係記事_</ins>
+
+本記事は、これまでの内容を自動化させるものとなります。
+
+**・1.[【ハード・ソフト協調検証①】Verilog HDLによる暗号化回路(AES-128)の設計](https://qiita.com/watapy/items/cc216b77695b3435f2f5)**
+図の Verilog RTL の中身、ハードウェア設計の詳細について解説しています。
+
+これまでの内容を GitHub Actions と Terraform を使用して「プッシュ即検証・分析」が走るパイプラインの構築をしており、今回の記事で説明しています。
 
 
-```mermaid
-graph TD
-    subgraph 外部環境
-        A[k6 / テスト端末]
-    end
+# 3.APIサーバー(Go)
+Goを使用した APIサーバーとなっています。
+今回に初めて Go を使用する為、AIに相談しながらの作成となりました。
+このAPIサーバーに関して詳細を説明します。
 
-    subgraph GKEクラスター
-        B[Go API Pod]
-        C[Python OCR Pod 1]
-        D[Python OCR Pod 2]
-        E[Python OCR Pod 3]
-        
-        B -- gRPC / Round Robin --> C
-        B -- gRPC / Round Robin --> D
-        B -- gRPC / Round Robin --> E
-        
-        F[HPA / 自動スケール] -. 監視・増減 .-> C
-        F -. 監視・増減 .-> D
-        F -. 監視・増減 .-> E
-    end
 
-    subgraph GCPサービス
-        B -- 構造化ログ --> G[Cloud Logging]
-        C -- 構造化ログ --> G
-        G -- ログシンク --> H[(BigQuery)]
-    end
+フロントエンドのGo APIと、バックエンドのPython OCRエンジンの通信には gRPC を採用しました。
 
-    A -- HTTP POST 画像送信 --> B
+
+## 3-1.gRPC通信（Protocol Buffers）
+単純なHTTP/1.1通信ではなく、gRPCとK8sの特性を組み合わせた高速かつ効率的な連携の仕組みについて解説します。
+.proto ファイルで型を厳密に定義することで、言語間の「解釈の不一致」を排除。特に画像のようなバイナリデータは、JSON化（Base64エンコード）によるデータ肥大化を避け、bytes 型のまま高速に転送できるのが大きなメリットです。
+
+
+```golang:./pb/predict.proto
+syntax = "proto3";
+package ocr;
+
+service Predictor {
+  rpc Predict (ImageRequest) returns (PredictResponse);
+}
+
+message ImageRequest {
+  bytes image_data = 1; // 画像をバイナリで高速転送
+}
+
+message PredictResponse {
+  string result = 1;
+}
+
+```
+
+## 3-2.プログラム実行フロー
+
+起動時に main が実行され、1通りの動作仕様を読み込みます。
+それが終了すると、以下の最後の記述部でリクエスト待ちとなります
+
+```golang:./go-api/main.go
+	log.Printf("Go API Server started on :8080 (Timeout: %ds)", timeoutSec)
+	r.Run(":8080")
+}
 ```
 
 
 
 
-# 2.技術スタックとシステム構成
 
-## 2-1.技術スタック
-本環境では、ハードウェア検証の結果をクラウドへシームレスに転送し、分析するために以下のツールを組み合わせています。
 
-|カテゴリ|技術・ツール|用途|
-|:--- |:--- |:--- |
-|Hardware|Verilog HDL/Icarus Verilog|回路記述・シミュレーション|
-|Software|Python 3.11|期待値生成・比較検証スクリプト
-|Data Analysis|BigQuery/dbt|検証ログの蓄積・分析モデルの構築
-|Infrastructure|Docker/Docker Compose|ツールチェーンのコンテナ化|
-|IaC|Terraform|検証用環境のプロビジョニング（拡張用）|
-|Management|Makefile|ビルド・テストコマンドの共通化|
+## 3-3.推論サーバーとの接続(python)
+今回は、GKEを使用した複数の Python PODが存在しており、負荷分散を目的として、その接続を頻繁に変更する必要があります。
+Python側では、30秒以内で接続をいったん切る設定となっており、それが切れた後に再接続する際の処理を規定しています。
+そのフローは以下の通りです
 
-### 2-1-1. ライブラリ (Python)
+**・gRPC 接続設定:ロードバランシング設定(round_robin)**
+**・Pythonサーバーへの「通信経路」を確立（この時点ではまだ土台作り）**
+**・接続そのものに失敗した場合（住所間違いや相手が起動していない等）は即終了**
+**・プログラム終了時（main関数終了時）に必ず回線を閉じるよう予約**
+**・確立した回線(conn)を使い、Pythonの機能を呼び出すための「専用窓口(クライアント)」を作成**
 
-| ライブラリ | 説明 |
+
+```golang:./go-api/main.go
+	// 1. Pythonサーバーへの「通信経路」を確立（この時点ではまだ土台作り）
+	conn, err := grpc.Dial(
+		targetAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()), // 暗号化なしで接続
+		grpc.WithDefaultServiceConfig(serviceConfig),             // 負荷分散ルールの適用
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second, // 10秒ごとに生存確認(ヘルスチェック)
+			Timeout:             time.Second,      // 生存確認の応答待機（1秒）
+			PermitWithoutStream: true,             // アイドル時も生存確認を許可
+		}),
+	)
+	// 2. 接続そのものに失敗した場合（住所間違いや相手が起動していない等）は即終了
+	if err != nil {
+		log.Fatalf("gRPC接続失敗: %v", err)
+	}
+	// 3. 【重要】プログラム終了時（main関数終了時）に必ず回線を閉じるよう予約
+	defer conn.Close()
+	// 4. 確立した回線(conn)を使い、Pythonの機能を呼び出すための「専用窓口(クライアント)」を作成
+	client := pb.NewPredictorClient(conn)
+```
+
+## 3-4.POSTリクエスト処理
+外部から POSTリクエストが来た時に、ここを起点に以下のフローが実行されます。
+
+```golang:./go-api/main.go
+	r.POST("/predict", func(c *gin.Context) {
+		startTime := time.Now()
+        ............
+        ............
+	})
+```
+
+以下の処理内容が実施されます。
+
+|順番 |処理内容 |
 | :--- | :--- |
-| cocotb | Python で記述できる、ハードウェア記述言語（VHDL/Verilog）向けのコ・シミュレーション検証フレームワーク |
-| pycryptodome | 暗号化、復号、ハッシュ計算など、低レベルな暗号機能を幅広く提供する Python 自律型暗号ライブラリ |
-| google-cloud-bigquery | BigQuery へのデータの読み書き、クエリ実行を行うための Google Cloud 公式クライアントライブラリ |
-| dbt-bigquery | データ変換ワークフローツール「dbt」を BigQuery で動作させるための専用アダプターライブラリ |
-
-
-## 2-2. ディレクトリ構成
-本プロジェクトの全体構成は以下の通りです。ソースコードはすべて GitHub リポジトリ に公開しています。
-
-https://github.com/wata123-t/AES-128_GitHub_Actions
-
-```text
-.
-├── .github/workflows/   # CI/CD設定（GitHub Actions）
-├── aes_dbt/             # BigQuery上のデータ変換・管理（dbtプロジェクト）
-├── python/              # cocotbテストベンチ・期待値生成スクリプト
-├── terraform/           # Google Cloud インフラ定義（IaC）
-├── verilog/             # AES-128 暗号化回路（RTL設計データ）
-├── Dockerfile           # 検証ツール（Icarus Verilog/Python）の環境定義
-├── docker-compose.yaml  # 複数コンテナ・環境変数の管理
-├── Makefile             # 各種実行コマンドの共通化
-└── README.md            # プロジェクトの概要・セットアップ手順
-
-
-```
-
-## 2-3. システム構成
-システム構成と簡易フローを図示します。（詳細は後述のセクションを参照）
-
-```mermaid
-graph TD
-    subgraph Local_or_CI [GitHub Actions / Local Environment]
-        A[Verilog RTL] -->|Simulation| B(cocotb / Icarus Verilog)
-        C[Python Testbench] -->|Control| B
-        D[pycryptodome] -->|Reference Data| B
-        B -->|Test Result / Logs| E{Makefile / Python Script}
-    end
-
-    subgraph Google_Cloud [Google Cloud Platform]
-        E -->|Upload / Client Lib| F[(BigQuery: Raw Data)]
-        F --> G[dbt: SQL Transformation]
-        G --> H[(BigQuery: Analyzed Models)]
-    end
-
-    subgraph Infrastructure_as_Code [IaC]
-        I[Terraform] -.->|Provisioning| Google_Cloud
-    end
-
-    style B fill:#f9f,stroke:#333,stroke-width:2px
-    style F fill:#4285F4,color:#fff
-    style G fill:#FF6347,color:#fff
-    style H fill:#4285F4,color:#fff
-
-```
-
-
-# 3.cocotbによる検証とデータ収集
-ここでは、Pythonベースの検証フレームワーク cocotb を使い、回路のシミュレーションと同時に検証結果をクラウドへ送信する仕組みを解説します。
-
-## 3-1. 検証の仕組み
-Pythonから直接Verilogを操作しているように見えますが、その裏側ではC++が高度な仲介を行っています。
-協調検証環境では、以下の3つの要素が **「バトンを渡すように」細かく切り替わりながら動作** しています。
-この制御をcocotbが肩代わりする事で、ユーザーはシミュレータ特有の複雑なコマンドやC言語インターフェース(VPI/DPI)を意識せず、使い慣れたPythonでの検証に集中できます。
-
-|レイヤー|役割|備考|
-| :--- | :--- |:--- |
-|Python(cocotb)|テストシナリオの記述|`async`/`await`による柔軟な制御|
-|C++中間層(GPI)|命令の変換・仲介|PythonとC言語の世界を接続|
-|Icarus Verilog|回路の動作実行|VPI/DPIという標準規格でC++と通信|
+|1|リクエストID（相関ID）の取得または生成|
+|2|k6等から送られてくる正解文字列の取得|
+|3|画像データの読み込み|
+|4|gRPCコンテキストの準備|
+|5|Python OCRエンジンへリクエスト送信|
+|6|メトリクス収集とログ出力|
+|7|合否判定|
+|8|判定結果に沿った処理(NG時は終了)|
+|9|Cloud Logging への送付|
+|10|レスポンス返却１(エラー通知)|
+|11|レスポンス返却2(正常時の結果通知)|
 
 
 
 
-## 3-2. 検証シナリオ
-具体的なテストの流れを解説します、大きな特徴としては、以下の二点になります。
+## 3-5.ロギング対応(json)
+K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
 
-**1. PyCryptodomeの活用**
-Pythonの標準的な暗号ライブラリを用いて「正解(期待値)」を算出します。
 
-**2. 疑似エラーの注入 (inject_error)**
-あえて10%の確率で入力を改ざんし、後続の分析基盤（dbt等）で「不一致」を正しく検知できるか、パイプラインの健全性をテストする試験となります。
+
+
+
+## 3-6.期待値比較
+
+K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
+
+
+
+
+
+
+
+
+
+------------------------------
+
+## 3-2.L7負荷分散とコネクションの維持
+K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
+
+**・Round Robinの設定:**
+grpc.WithDefaultServiceConfig を使い、クライアント側でリクエストを分散させている点。これがないと特定のPodに通信が偏り、自動スケールの恩恵を受けられません。
+**・gRPC Keepalive:**
+keepalive.ClientParameters の設定。アイドル状態でも接続を維持し、Podが入れ替わっても即座に再接続する「粘り強さ」を解説します。
+
+## 3-3.観測性を高める「構造化ログ」とリクエスト追跡
+GKE（Cloud Logging）での運用を前提とした、実戦的なログ設計についてです。
+**・X-Correlation-ID による分散トレーシング:**
+HTTPヘッダーからIDを引き継ぎ、gRPCの metadata を通じてPython側へ伝播させる仕組み。「Goのログ」と「Pythonのログ」を紐付ける重要性を書きます。
+**・JSON形式の構造化ログ:**
+CloudLog 構造体。単なる文字列ではなくJSONで出力することで、Cloud Logging上で「CPU使用率50%以上のリクエスト」といった高度な検索・分析が可能になる点を紹介します。
+
+## 3-4.負荷試験を見据えた「合否判定」の組み込み
+ここがこのコードのユニークな点です。
+**・X-Expected-Text による自動検証:** 
+k6等から「この画像にはこの文字が入っているはず」という正解をヘッダーで送り、OCR結果と照合する仕組み。
+**・SLI/SLOへの活用:**
+単に「動いているか」だけでなく、「正しく読み取れているか（IsMatch）」をログに記録することで、リリース後の精度劣化をいち早く検知できるメリットを解説します。
+
+## 4-4.リソース使用率の可視化
+psutil を使い、推論直後のCPU使用率をログに記録しています。これにより、**「特定の画像サイズでCPUがスパイクしている」** といったボトルネックの特定や、HPA（Horizontal Pod Autoscaler）の閾値設定の判断材料として活用できます。
 
 
 <details>
-<summary>コード(python/test_aes.py)のテストシナリオ部を抜粋</summary>
+<summary>./go/main.go</summary>
 
-```python
-#####################################################
-# テストシナリオ
-#####################################################
-@cocotb.test()
-async def aes_basic_test(dut):
-    # 1. バックグラウンドでクロック生成を開始 (10ns周期 = 100MHz)
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+```go
+package main
 
-    # 2. ハードウェアのリセット処理
-    # Pythonを20ns停止(await)させて、その間のRTL動作を待機する
-    dut.rst.value = 1
-    dut.start.value = 0
-    await Timer(20, units="ns")
-    dut.rst.value = 0
-    await RisingEdge(dut.clk)
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings" // ★追加: 文字列比較用
+	"time"
 
-    results = [] 
-    test_count = 50 
-    run_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+	"github.com/gin-gonic/gin"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 
-    # 3. 検証ループ（指定回数分、ランダム・テストを実施）
-    for i in range(test_count):
-        # 3-1. データ生成
-        ptext_int = random.getrandbits(128)
-        key_int = random.getrandbits(128)
-
-        # 3-2. 疑似エラーの挿入（10%の確率でVerilogへの入力だけ壊す）
-        inject_error = True if random.random() < 0.1 else False
-        sim_input = ptext_int ^ 1 if inject_error else ptext_int
-
-        # 3-3. RTLへの信号入力とシミュレーション実行
-        dut.plaintext.value = sim_input # 壊れた可能性のある値を入力
-        dut.key.value = key_int
-        dut.start.value = 1
-        await RisingEdge(dut.clk)
-        dut.start.value = 0
-
-        # 3-4. 処理完了待ち
-        # 完了信号(done)が立つまで Python を一時停止して待機
-        count = 0
-        while not dut.done.value and count < 100:
-            await RisingEdge(dut.clk)
-            count += 1
-
-        actual_out = int(dut.ciphertext.value)
-        
-        # 3-5. 期待値の算出
-        cipher = AES.new(key_int.to_bytes(16, 'big'), AES.MODE_ECB)
-        expected_out = int.from_bytes(cipher.encrypt(ptext_int.to_bytes(16, 'big')), 'big')
-
-        # 3-6. BigQuery送信用データ成績（128bitを0埋め16進数文字列にする）
-        res_data = {
-            "test_id": f"{run_timestamp}_{i}",
-            "ptext_hex": format(ptext_int, '032x'),
-            "key_hex": format(key_int, '032x'),
-            "actual_out_hex": format(actual_out, '032x'),
-            "expected_out_hex": format(expected_out, '032x'),
-            "error_injected": inject_error,
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-
-        # 3-7. データ追加
-        results.append(res_data)
-
-    # 4. BigQueryに送信
-    if results:
-        send_to_bigquery_batch(results)
-
-```
-</details>
-
-
-
-## 3-3. BigQueryへのバッチロード
-シミュレーションで収集した検証結果を、一括してBigQueryへ転送します。
-1レコードずつ送信するのではなく、リストに蓄積してから **「バッチロード」** することで、APIの呼び出し回数を抑え、高速かつ効率的にクラウドへデータを同期します。
-
-`bigquery.Client`設定は、「ローカル環境での実施時」、「GitHub ActionSでの実施」で切り替えが必要となります。
-
-<details>
-<summary>コード(python/test_aes.py)のBigQueryバッチロード部を抜粋</summary>
-
-```python
-
-def send_to_bigquery_batch(results):
-    """
-    検証結果リストをJSON形式でBigQueryへ一括ロードする
-    """
-
-    ★以下の二つは必ず、どちらか一方を選択してから実行してください
-    #################################################################################
-    #　①ローカル環境での実行用
-    #################################################################################
-    key_path = os.path.join(os.path.dirname(__file__), "credentials/bq-writer.json")
-    credentials = service_account.Credentials.from_service_account_file(key_path)
-    client = bigquery.Client(credentials=credentials, project=credentials.project_id)
-    table_id = f"{credentials.project_id}.aes_verification_dataset.verification_results"
-
-    #################################################################################
-    # ②GitHub Action　で実施する場合
-    #################################################################################
-    client = bigquery.Client(location="asia-northeast1")
-    table_id = f"{client.project}.aes_verification_dataset.verification_results"
-    #################################################################################
-    
-
-    # --- ロードジョブの設定 ---
-    job_config = bigquery.LoadJobConfig(
-        # JSON (LJSON) 形式でロード
-        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-        # データの型を自動判別
-        autodetect=True,
-        # 実行のたびにテーブルを上書き (履歴を蓄積する場合は WRITE_APPEND を使用)
-        write_disposition="WRITE_TRUNCATE", 
-    )
-
-    # --- データの転送実行 ---
-    # Python のリスト(dict)を直接 JSON としてロードジョブに投入
-    job = client.load_table_from_json(results, table_id, job_config=job_config)
-    
-    try:
-        # ジョブの完了を待機
-        job.result()
-        print(f"Success: {job.output_rows} rows loaded to BigQuery (Table Overwritten).")
-    except Exception as e:
-        # 転送失敗時のエラーハンドリング
-        print(f"Failed to load data: {e}")
-
-
-```
-</details>
-
-
-
-
-# 4.dbtによる分析
-BigQueryに蓄積されたシミュレーション結果を、dbtを用いて解析・分類しました。
-
-## 4-1. 期待値比較(aes_summary.sql)
-単なる期待値との照合だけでなく、「意図的にエラーを注入したシナリオ」を含めることで、テストベンチ自体の検知能力（健全性）を管理しています。
-
-**EXPECTED_FAILURE:** エラー注入に対し、正しく不一致（テスト環境の正常動作）
-**PASS:** エラー注入なしの状態で、計算結果が期待値と完全一致
-**FAIL:** 想定外の不一致。(修正すべきバグ)
-
-<details>
-<summary>コード(./models/aes_summary.sql)</summary>
-
-```sql
-SELECT
-    test_id,
-    timestamp,
-    error_injected,
-    -- データ型の不一致を防ぐため、文字列として比較
-    (actual_out_hex = expected_out_hex) AS is_physically_match,
-    
-    CASE 
-        WHEN error_injected = TRUE AND (actual_out_hex != expected_out_hex) THEN 'EXPECTED_FAILURE'
-        WHEN error_injected = FALSE AND (actual_out_hex = expected_out_hex) THEN 'PASS'
-        ELSE 'FAIL'
-    END AS verification_status
-FROM {{ source('aes_raw', 'verification_results') }}
-```
-</details>
-
-
-## 4-2. 網羅性観測「ビットトグル分析」 (fct_bit_toggles.sql)
-ハードウェア検証において、信号が「0」から「1」、あるいは「1」から「0」へ変化したことを確認する「トグルカバレッジ」は、テストの質を担保する上で不可欠な指標です。
-全ビットがどれくらいでの頻度で反転（トグル）するかをチェックるする事でテストパターンの偏りや、特定のビットが固定化の危険性を洗い出します。
-
-
-```sql
-![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/5259ccf2-9062-405c-a86a-ee88f1938fcb.png)
--- models/fct_bit_toggles.sql
-{{ config(materialized='table') }}
-
-WITH raw_data AS (
-    SELECT 
-        test_id,
-        timestamp,
-        ptext_hex
-    FROM {{ source('aes_raw', 'verification_results') }}
-),
-
--- 0〜127のインデックスを生成
-bit_indices AS (
-    SELECT i AS bit_index FROM UNNEST(GENERATE_ARRAY(0, 127)) AS i
-),
-
--- 1行を128行のビット単位に展開
-expanded_bits AS (
-    SELECT
-        r.test_id,
-        r.timestamp,
-        b.bit_index,
-        -- 1文字(4bit)を取り出し、数値化してビット判定。これなら絶対オーバーフローしません。
-        CASE WHEN (
-          CAST(CONCAT('0x', SUBSTR(r.ptext_hex, DIV(b.bit_index, 4) + 1, 1)) AS INT64) & 
-          (8 >> MOD(b.bit_index, 4))
-        ) > 0 THEN 1 ELSE 0 END AS bit_value
-    FROM raw_data r
-    CROSS JOIN bit_indices b
-),
-
--- ウィンドウ関数で「前回値」と比較
-bit_changes AS (
-    SELECT
-        bit_index,
-        bit_value,
-        LAG(bit_value) OVER(PARTITION BY bit_index ORDER BY timestamp) AS prev_bit_value
-    FROM expanded_bits
+	"go-api/pb"
 )
 
--- ビットごとのトグル回数を集計
-SELECT
-    bit_index,
-    SUM(CASE WHEN prev_bit_value IS NOT NULL AND bit_value != prev_bit_value THEN 1 ELSE 0 END) AS toggle_count
-FROM bit_changes
-GROUP BY bit_index
+// Cloud Logging用の構造化ログ
+type CloudLog struct {
+	Severity  string  `json:"severity"`
+	RequestID string  `json:"request_id"`
+	Step      string  `json:"step"`
+	LatencyMs int64   `json:"duration_ms"`
+	IsSuccess bool    `json:"is_success"`
+	CPUUsage  float64 `json:"cpu_usage"`
+	PodName   string  `json:"pod_name"`
+	Message   string  `json:"message"`
+	Expected  string  `json:"expected"` // ★追加: 期待する正解文字列
+	IsMatch   bool    `json:"is_match"` // ★追加: 合否判定結果
+}
+
+func main() {
+	podName, _ := os.Hostname()
+	if podName == "" {
+		podName = "unknown-go-pod"
+	}
+
+	// 環境変数からタイムアウト設定を取得
+	timeoutStr := os.Getenv("TIMEOUT_SECONDS")
+	timeoutSec, err := strconv.Atoi(timeoutStr)
+	if err != nil {
+		timeoutSec = 15
+	}
+
+	// gRPC 接続設定
+	serviceConfig := `{"loadBalancingConfig": [{"round_robin":{}}]}`
+	targetAddr := os.Getenv("PYTHON_RPC_ADDR")
+	if targetAddr == "" {
+		targetAddr = "localhost:50051"
+	}
+
+	conn, err := grpc.Dial(
+		targetAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(serviceConfig),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	if err != nil {
+		log.Fatalf("gRPC接続失敗: %v", err)
+	}
+	defer conn.Close()
+	client := pb.NewPredictorClient(conn)
+
+	r := gin.Default()
+
+	r.POST("/predict", func(c *gin.Context) {
+		startTime := time.Now()
+
+		// 1. リクエストID（相関ID）の取得または生成
+		requestID := c.GetHeader("X-Correlation-ID")
+		if requestID == "" {
+			requestID = fmt.Sprintf("gen-%d", startTime.UnixNano())
+		}
+
+		// ★追加: k6等から送られてくる正解文字列の取得
+		expectedText := c.GetHeader("X-Expected-Text")
+
+		// 2. 画像データの読み込み
+		file, header, err := c.Request.FormFile("image")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ファイル取得エラー"})
+			return
+		}
+		defer file.Close()
+
+		imageData, _ := io.ReadAll(file)
+		log.Printf("[%s] 受信: %s (%d bytes)", requestID, header.Filename, len(imageData))
+
+		// 3. gRPCコンテキストの準備
+		ctx := metadata.AppendToOutgoingContext(context.Background(), "x-correlation-id", requestID)
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+		defer cancel()
+
+		// 4. Python OCRエンジンへリクエスト送信
+		res, err := client.Predict(ctx, &pb.ImageRequest{ImageData: imageData})
+
+		// 5. メトリクス収集とログ出力
+		percent, _ := cpu.Percent(0, false)
+		var cpuVal float64
+		if len(percent) > 0 {
+			cpuVal = percent[0]
+		}
+
+		isSuccess := (err == nil)
+		duration := time.Since(startTime).Milliseconds()
+
+		// ★追加: 正解の合否判定
+		isMatch := false
+		if isSuccess && expectedText != "" {
+			// OCR結果に期待する文字列が含まれているか
+			isMatch = strings.Contains(res.Result, expectedText)
+		}
+
+		logEntry := CloudLog{
+			Severity:  "INFO",
+			RequestID: requestID,
+			Step:      "go-api-complete",
+			LatencyMs: duration,
+			IsSuccess: isSuccess,
+			CPUUsage:  cpuVal,
+			PodName:   podName,
+			Expected:  expectedText, // ★追加
+			IsMatch:   isMatch,      // ★追加
+			Message:   fmt.Sprintf("OCR Processed by %s", podName),
+		}
+		
+		if isSuccess {
+			logEntry.Message = fmt.Sprintf("Expected: %s, Got: %s", expectedText, res.Result)
+		} else {
+			logEntry.Severity = "ERROR"
+			logEntry.Message = fmt.Sprintf("Predict error: %v", err)
+		}
+
+		logJSON, _ := json.Marshal(logEntry)
+		fmt.Println(string(logJSON))
+
+		// 6. レスポンス返却
+		if !isSuccess {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "OCR処理エラーまたはタイムアウト", "id": requestID})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "推論完了",
+			"result":  res.Result,
+			"id":      requestID,
+		})
+	})
+
+	log.Printf("Go API Server started on :8080 (Timeout: %ds)", timeoutSec)
+	r.Run(":8080")
+}
 
 ```
-<details>
-<summary>コード(./models/fct_bit_toggles.sql)</summary>
+
 </details>
 
-### <ins>_◆技術的特徴_</ins>
-
-**1. 長大なビット幅への対応（オーバーフロー回避）**
-128bitデータは、通常のSQLの整数型（INT64等）では扱いきれず、そのまま数値化すると桁あふれが発生しますが、このコードでは、SUBSTR を使って16進数文字列を1文字（4bit分）ずつ取り出して処理する事で回避してます。
-
-**2. CROSS JOIN による宣言的なデータ展開**
-ループ処理を用いることなく、CROSS JOIN によって1行のレコードを128行の「ビット単位レコード」へとフラット化しています。これにより、SQLの強力な並列分散処理能力をフルに活用できます。
-
-**3. ウィンドウ関数による「動き」の検知**
-LAG() 関数を利用し、時系列における「現在の値」と「直前の値」を比較しています。単に「0と1が出現したか」だけでなく、「値が変化した瞬間」をカウントできるため、より動的な網羅性の検証が可能です。
-
-**4. 検証結果の「見える化」への適合性**
-出力がビットインデックスごとの集計値となるため、BIツール等でヒートマップ化するのに最適です。「下位ビットは激しく動いているが、上位ビットが全く動いていない」といったテストシナリオの不備を直感的に特定できるようになります。
 
 
-## 4-3. dbt test による自動品質チェック
-モデルを作成して可視化するだけでなく、検証の合格基準や網羅性の閾値を `dbt test`として定義することで、CI/CDパイプライン上で検証の成否を自動判定させることが可能になります。
-
-ここでは、ハードウェア検証において特に重要な2つのチェックを紹介します。
 
 
->#### ① トグルカバレッジの自動監視
-算出したビットごとのトグル回数から一度も値が変化しなかったビットを即座に検知します。これにより、テストパターンの不足を自動でキャッチできます。
 
-<details>
-<summary>コード(./tests/assert_all_bits_toggled.sql)</summary>
+# 5.Helmによるインフラ管理
 
-```sql
--- 全ビットが1回以上トグルしていないレコードがあれば「失敗」とみなす
-SELECT
-    bit_index,
-    toggle_count
-FROM {{ ref('fct_bit_toggles') }}
-WHERE toggle_count = 0
-SELECT
-    bit_index,
-    toggle_count
-FROM {{ ref('fct_bit_toggles') }}
-WHERE toggle_count = 0
+## 5-1.helm とは、
+Kubernetesのパッケージマネージャーです。Terraformが「Nodeやネットワークなどの土台（インフラ層）」を作るのに対し、Helmは「その上で動く複数のアプリケーション（アプリ層）」を効率よく管理します。
+
+![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/9c9334e7-a2aa-4968-b3ae-de9b46756e54.png)
+
+具体的には、以下の3つの役割を担います。
+
+**テンプレート化（共通化）**
+Go APIもPython OCRも、DeploymentやServiceの「形」はほぼ同じです。Helmを使うことで、共通のひな形を作成し、中身の数値（イメージ名やCPU制限）だけを差し替えることが可能になります。
+
+
+**一括デプロイ**
+deployment.yaml、service.yaml、hpa.yaml など、バラバラなファイルを「1つのアプリケーション（Chart）」としてまとめてデプロイ・管理できます。
+
+**環境差分の吸収**
+values.yaml を切り替えるだけで、「開発環境は1ポッド」「本番環境は最小5ポッド」といった構成変更が、コードを書き換えずに実現できます。
+
+## 5-2. values.yaml
+システム全体の「設計図」です。特にPython側のリソースは、EasyOCRのモデル展開用に **メモリを最低1GB（Limit 2GB）** 確保し、推論中にPodがOOM（Out Of Memory）で即死するのを防いでいます。
+
+```hcl
+# 抜粋：gRPC通信を有効化する設定
+go:
+  env:
+    # dns:/// を指定することでクライアントサイドロードバランシングを有効化
+    PYTHON_RPC_ADDR: "dns:///python-api-svc:50051"
 
 ```
-</details>
 
->#### ② 検証ステータスの不一致検知
-テストベンチの実行結果において、FAIL判定結果が1件も存在しないかをチェックします。
-これを `dbt test` に組み込むことで、自動的に品質チェックが走り、見落としを防ぎます。
 
-<details>
-<summary>コード(./tests/assert_no_verification_failures.sql)</summary>
+## 5-3. deployment.yaml
+range を使ってGoとPythonのDeploymentを共通化しています。ポイントは env セクションで、メタデータから POD_NAME を取得し環境変数に注入している点です。これにより、前述の「構造化ログ」にどのPodが処理したかを出力可能にしています。
 
-```sql
--- verification_status が 'FAIL' のレコードを抽出
--- 1件でもヒットすれば、dbt test は「失敗」と判定します
-SELECT
-    test_id,
-    verification_status
-FROM {{ ref('aes_summary') }}
-WHERE verification_status = 'FAIL'
+## 5-4. service.yaml
+ここが本構成のキモです。Python側のServiceを Headless Service (clusterIP: None) として定義しています。
 
+Python側のServiceを Headless Service (clusterIP: None) として定義しています。通常のServiceではgRPCのコネクションが特定のPodに固定されてしまいますが、Headlessにすることで、Go API側が全PodのIPを直接把握し、リクエストを均等に分散（クライアントサイド・ロードバランシング）できるようになります
+
+**・なぜHeadlessか？:** 通常のService（ClusterIP）では、gRPCのHTTP/2コネクションが1つのPodに固定されてしまいます。
+
+**・効果:** Headlessにすることで、Go API（Client）側がPython Pod個別のIPアドレスを直接解決できるようになり、クライアントサイドでの Round Robin負荷分散 が可能になります。
+
+## 5-5. hpa.yaml
+OCR処理は非常にCPU負荷が高いため、HorizontalPodAutoscaler を設定しています。targetCPU: 70 とやや高めに設定することで、一時的なスパイクによる頻繁なスケールイン・アウト（スラッシング）を抑制し、安定性を高めています。
+
+
+
+## 5-6. rbac.yaml
+Go API側がK8sのAPIサーバーにアクセスし、Python Podの増減を監視（Watch）するために必要な権限を定義しています。pod-reader ロールを付与することで、サービスディスカバリ（名前解決）の精度を担保します。
+Go API側がPython Podの増減を正しく検知するために必要な権限（EndpointsやPodsの参照権限）を定義しています。
+
+# 6.Terraformによるインフラ自動化
+システムの土台となるGCPリソースはすべてTerraformで構成（IaC）しています。単にサーバーを立てるだけでなく、「安く、止まらず、分析しやすい」基盤をコードで定義しています。
+
+## 6-1.ログの資産化（Cloud Logging → BigQuery）
+本システムの最大の特徴は、出力した構造化ログをリアルタイムでBigQueryへ転送（Sink）している点です。
+
+**・google_logging_project_sink:** jsonPayload.request_id:* というフィルタをかけることで、アプリケーションの重要なログだけを抽出してBigQueryへ流し込みます。
+
+**・メリット:** Cloud Loggingの保存期間を気にせず、SQLを使って「時間帯別のOCR精度」や「Podごとの処理遅延」を瞬時に分析できるようになります。
+
+
+## 6-2.コスト最適化とオートスケーリング
+OCR処理は負荷が高い反面、常にフル稼働させる必要はありません。
+
+**・Spotインスタンスの採用:** spot = true 設定により、通常の3分の1程度のコストで計算リソースを確保します。
+
+**・Cluster Autoscaler:** autoscaling ブロックにより、ノード（マシン）自体も負荷に応じて1台から4台まで自動増減させます。HPA（Podの増減）と連動して、インフラ全体が伸縮します。
+
+
+## 6-3.ネットワーク設計（VPC & Subnet）
+K8sクラスターを構築する際、将来の拡張を見越してセカンダリIP範囲（Pod用・Service用）を明示的に定義しています。
+
+```hcl
+secondary_ip_range {
+  range_name    = "pod-ranges"
+  ip_cidr_range = "192.168.16.0/20" # Podに割り当てられる広大なIP帯域
+}
 ```
+
+## 6-4.Artifact Registry
+
+ビルドしたGoとPythonのDockerイメージを管理するプライベートリポジトリを定義しています。GKEとの親和性が高く、高速なイメージプルが可能です。
+
+
+
+
+
+# 7.デプロイ手順
+本システムのコードは GitHub（[ここにURL]）に公開しています。以下の手順で、インフラの構築からアプリケーションのデプロイまでを再現可能です。
+
+
+## 7-1. インフラの構築 (Terraform)
+まず、GCP上にGKEクラスタやArtifact Registryを構築します。
+
+```bash
+cd terraform
+terraform init
+terraform apply -var="project_id=YOUR_PROJECT_ID"
+```
+
+
+## 7-2. イメージのビルドとプッシュ
+GoとPythonの各イメージをビルドし、Artifact Registryへプッシュします。
+
+```bash
+# Artifact Registryへの認証
+gcloud auth configure-docker asia-northeast1-docker.pkg.dev
+
+# ビルドとプッシュ（例：Python）
+docker build -t asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/ocr-images/python-api:latest ./python-api
+docker push asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/ocr-images/python-api:latest
+```
+
+
+## 7-3. アプリケーションのデプロイ (Helm)
+Helmを使用して、K8sリソース（Deployment, Service, HPAなど）を一括デプロイします。
+
+```bash
+# 接続先クラスタを切り替え
+gcloud container clusters get-credentials ocr-cluster --region asia-northeast1-a
+
+# Helmチャートをインストール
+helm install ocr-system ./chart
+```
+
+
+
+
+
+
+
+# 8.おわりに（構築編のまとめ）
+本記事では、GoとPython、そしてGKEを組み合わせた **「実戦的なOCR基盤」** の構築過程を解説しました。
+単に文字認識を行うだけでなく、
+**・gRPC**によるマイクロサービス間の高速通信
+**・Terraform**によるコードベースのインフラ管理
+**・Headless Service**を用いたK8s上での適切な負荷分散
+**・BigQuery**を見据えた構造化ログの設計
+といった、データエンジニアリングにおいて不可欠な「スケーラビリティ」と「観測性」を意識した設計を盛り込みました。
+
+### **次回予告：高負荷試験による限界突破の検証**
+構築したこの基盤は、果たして実際の高負荷環境下でどのような挙動を見せるのでしょうか？
+次回の**【検証編】**では、負荷試験ツール **k6** を用い、正解データ（Ground Truth）を突き合わせながら以下の項目を徹底検証します。
+
+**・オートスケーリングの真価:** HPAによってPodやNodeが動的に増減する様子の可視化。
+**・データ品質の分析:** BigQueryに蓄積されたログをSQLで集計し、負荷増加時のレイテンシやOCR正解率の推移を算出。
+**・システムの限界性能:** リソース制限（1CPU/2GB）下での最適なスループットの特定。
+
+インフラが「データ」で語る瞬間を、ぜひ次回の記事でご覧ください。
+
+
+
+--------------------------------------------
+---------------------
+<details>
+<summary>コード(.github/workflows/verify.yml)</summary>
+
+```yaml
+name: AES-128 検証パイプライン
+        run: |
+          cd ./terraform
+          terraform destroy -auto-approve \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}"
+```
+
 </details>
+
+
+### <ins>_◆効率化ポイント_</ins>
+
+>#### ①`workflow_dispatch` でデバッグを快適に
+GitHub 画面に **「手動実行ボタン」** を表示させる設定です。
+**●メリット:** `git push` しなくても、ボタン一つで再実行が可能。今回のような Terraform や dbt を含む重い処理で、「環境設定だけ変えて試したい」という時のデバッグ効率が圧倒的に向上します。
+>#### ②「ステップ名（表示名）」の日本語化
+ **`-name`:** に日本語を使用すると、実行画面の実用性がグンと上がります。
+
+**・エラーの早期発見:** どの工程で失敗したのか、英語のログを読み解く前に直感的にわかります。
+**・進捗の可視化:** 「どこまで処理が進んだか」がひと目で判断でき、運用・メンテナンスのストレスを軽減します。
 
 :::note info
-**なぜSQLだけでなくdbtを使うのか？**
-単なるSQLクエリとdbtの最大の違いは、「テスト（検証）をパイプラインの構成要素として扱えること」にあります。
-人間がログを目視することなく、データの健全性を機械的に、かつ継続的に保証し続けることが可能になります。
+不要になった履歴は、個別に、または一括で削除することも可能です。
 :::
 
 
-
-# 5.実行方法
-本プロジェクトのソースコードは以下に公開しています。
-https://github.com/wata123-t/AES-128_GitHub_Actions
-Docker環境を利用することで、複雑な依存関係を構築せずに `cocotb` による検証と
-`dbt` による分析を実行可能です。
+## 4-2.実行コマンド
+自分のGitHubリポジトリで`GitHub Actions`(自動化)を試すための手順となります。
 
 ```bash
-# 1. ソースコードをダウンロード、プロジェクトのディレクトリへ移動
+# 1. ソースコードをローカルにダウンロード
 git clone https://github.com/wata123-t/AES-128_GitHub_Actions
+
+# 2. プロジェクトのディレクトリへ移動
 cd AES-128_GitHub_Actions
 
-# 2.　Terraform ディレクトリに移動、terraform実行
-cd ./terraform
-gcloud auth application-default login
-terraform init
-terraform apply
-cd ../
+# 3. Gitリポジトリとして初期化
+git init
 
-# 3. 実行環境の構築
-# cocotb(Icarus Verilog)やdbtの実行に必要なイメージをビルドします
-docker compose build
+# 4. 全てのファイルをコミット対象に追加
+git add .
 
-# 4. cocotb シミュレーション実行
-# RTLの検証を行い、結果をBigQuery(またはローカルDB)へ転送します
-docker compose up aes-verify
+# 5. 現在の状態をローカルに記録
+git commit -m "Initial commit"
 
-# 5. dbt モデルの作成（分析実行）
-docker compose run --rm dbt run
+# 6. 自分のGitHubリポジトリを送信先に設定
+git remote add origin (あなたのリポジトリURL)
 
-# 6. dbt 合否判定
-docker compose run --rm dbt test
+# 7. メインブランチ名を「main」に設定
+git branch -M main
 
+# 8. 自分のリポジトリへデータを反映
+git push -u origin main
 ```
-
-# 6.実行結果
-各コマンド実行時の結果を掲載します。
-
-## 6-1 cocotb シミュレーション結果
-`cocotb`実行コマンドである、以下を実行した場合のログとなります。
-`docker compose up aes-verify`
-
-<details>
-<summary>cocotb実行ログ</summary>
-
-![cocotb実施結果.JPG](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/6c2c6f74-df02-43fd-a934-2b87d95e656d.jpeg)
-
-</details>
-
-## 6-2 `dbt`合否判定の結果
-`dbt`合否判定コマンドである、以下を実行した場合のログとなります。
-docker compose run --rm dbt test
-
-<details>
-<summary>dbt合否判定ログ</summary>
-
-![dbt実施結果.JPG](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/f798c391-49b8-4ecc-ac92-c06ee25745d0.jpeg)
-
-</details>
-
-
-
-
-# 7.まとめ
-今回はAES-128ハードウェアモデルの検証結果を「BigQuery × dbt」で分析するという試みを行いました。
-特にdbt（SQL）を用いたbit演算はかなり特殊なアプローチであり、AIの助けを借りつつコードに落とし込みましたが、そのロジックを自分自身で咀嚼するのには一苦労しました。
-しかし、一見遠回りに見えるこの手法を通じて、デジタル設計の検証結果を「データ分析」の視点で扱えたことは、非常に大きな学びとなりました。
-従来のハードウェア開発において cocotb を活用する場面はまだ限定的かもしれません。しかし、膨大なシミュレーション結果を BigQuery に集約し、dbt で柔軟に解析・可視化できるこのフローは、より複雑化する近年のデジタル設計検証において非常に強力な武器になると確信しています。
