@@ -110,17 +110,15 @@ graph TD
 
 
 # 3.APIサーバー(Go)
-Goを使用した APIサーバーとなっています。
-今回に初めて Go を使用する為、AIに相談しながらの作成となりました。
-このAPIサーバーに関して詳細を説明します。
+Goを使用したAPIサーバーの構成について解説します。今回、初めてGoを使用するため、AIと相談しながら「GKE上での安定稼働」と「低レイテンシ」を目標に構築しました。
+フロントエンドのGo APIと、バックエンドのPython OCRエンジンの通信には、パフォーマンスを最大限に引き出すため **gRPC** を採用しています。
 
 
-フロントエンドのGo APIと、バックエンドのPython OCRエンジンの通信には gRPC を採用しました。
+## 3-1.gRPC通信（Protocol Buffers）による最適化
+単純なREST（HTTP/1.1）ではなくgRPCを採用した理由は、型定義の厳密さと転送効率です。
 
-
-## 3-1.gRPC通信（Protocol Buffers）
-単純なHTTP/1.1通信ではなく、gRPCとK8sの特性を組み合わせた高速かつ効率的な連携の仕組みについて解説します。
-.proto ファイルで型を厳密に定義することで、言語間の「解釈の不一致」を排除。特に画像のようなバイナリデータは、JSON化（Base64エンコード）によるデータ肥大化を避け、bytes 型のまま高速に転送できるのが大きなメリットです。
+**・データ転送の効率化:** 画像のようなバイナリデータは、JSONではBase64エンコードによる肥大化（約1.3倍）を招きますが、gRPCでは bytes 型としてそのまま転送できるため、帯域を節約できます。
+**・型安全なインターフェース:** .proto ファイルからGo/Python両方のコードを生成することで、言語間の「解釈の不一致」をコンパイルレベルで排除しています。
 
 
 ```golang:./pb/predict.proto
@@ -143,30 +141,19 @@ message PredictResponse {
 
 ## 3-2.プログラム実行フロー
 
-起動時に main が実行され、1通りの動作仕様を読み込みます。
-それが終了すると、以下の最後の記述部でリクエスト待ちとなります
+軽量で高速なWebフレームワーク **Gin** を使用し、起動時にgRPCクライアントを初期化した後、リクエストを待ち受けます。
 
 ```golang:./go-api/main.go
 	log.Printf("Go API Server started on :8080 (Timeout: %ds)", timeoutSec)
+    // サーバーを起動し、リクエストをブロッキングして待ち受ける
 	r.Run(":8080")
 }
 ```
 
-
-
-
-
-
-## 3-3.推論サーバーとの接続(python)
-今回は、GKEを使用した複数の Python PODが存在しており、負荷分散を目的として、その接続を頻繁に変更する必要があります。
-Python側では、30秒以内で接続をいったん切る設定となっており、それが切れた後に再接続する際の処理を規定しています。
-そのフローは以下の通りです
-
-**・gRPC 接続設定:ロードバランシング設定(round_robin)**
-**・Pythonサーバーへの「通信経路」を確立（この時点ではまだ土台作り）**
-**・接続そのものに失敗した場合（住所間違いや相手が起動していない等）は即終了**
-**・プログラム終了時（main関数終了時）に必ず回線を閉じるよう予約**
-**・確立した回線(conn)を使い、Pythonの機能を呼び出すための「専用窓口(クライアント)」を作成**
+## 3-3.GKE環境での負荷分散と再接続戦略
+GKE上で複数のPython Podが動く構成において、特定のPodに負荷が偏るのを防ぐため、 **クライアントサイド・ロードバランシング** を実装しています。
+Python側ではgoとの接続を30秒で切断する動作仕様ですが、**gRPCクライアント** がバックグラウンドで自動的に再接続を試みます。
+このコード内で、接続の状態を逐一チェックしたり再接続ロジックを書いたりする必要がなく、常に繋がっているものとして扱えるのが大きな利点です。
 
 
 ```golang:./go-api/main.go
@@ -191,8 +178,9 @@ Python側では、30秒以内で接続をいったん切る設定となってお
 	client := pb.NewPredictorClient(conn)
 ```
 
-## 3-4.POSTリクエスト処理
-外部から POSTリクエストが来た時に、ここを起点に以下のフローが実行されます。
+## 3-4.POSTリクエスト処理と相関ID
+外部から受け取った画像と検証用の期待値を処理します。
+外部からPOSTリクエストを受け取ると、以下の記述部から処理が実行されます。
 
 ```golang:./go-api/main.go
 	r.POST("/predict", func(c *gin.Context) {
@@ -204,70 +192,55 @@ Python側では、30秒以内で接続をいったん切る設定となってお
 
 以下の処理内容が実施されます。
 
-|順番 |処理内容 |
+|概要|処理内容 |
 | :--- | :--- |
-|1|リクエストID（相関ID）の取得または生成|
-|2|k6等から送られてくる正解文字列の取得|
-|3|画像データの読み込み|
-|4|gRPCコンテキストの準備|
-|5|Python OCRエンジンへリクエスト送信|
-|6|メトリクス収集とログ出力|
-|7|合否判定|
-|8|判定結果に沿った処理(NG時は終了)|
-|9|Cloud Logging への送付|
-|10|レスポンス返却１(エラー通知)|
-|11|レスポンス返却2(正常時の結果通知)|
+|リクエストID(相関ID)の生成|X-Correlation-ID ヘッダーから取得し、なければ新規生成。Python側へも引き継ぎます|
+|正解文字列の取得|負荷試験時の精度計測用|
+|画像データの読み込み|multipart/form-data から取得|
+|gRPCコンテキスト準備|タイムアウト設定とメタデータの埋め込み|
+|Python OCRエンジンへ送信|生成したgRPCクライアントを使用|
 
 
+## 3-5.精度検証（期待値比較）
+推論結果が正しいかどうかをその場で判定します。この結果をログに含めることで、後にBigQueryで「どの画像が苦手か」を統計的に抽出できるようにしています。
+
+```golang:./go-api/main.go
+		// 7. 合否判定
+		isMatch := false
+		if isSuccess && expectedText != "" {
+			// OCR結果に期待する文字列が含まれているか
+			isMatch = strings.Contains(res.Result, expectedText)
+		}
+```
+
+## 3-6.Cloud Logging を活用した分析基盤
+運用監視と分析のため、ログはすべて JSON形式の構造化ログ として標準出力します。
+これを Google Cloud Logging が自動回収し、BigQuery へシンク（転送）します。
+
+```golang:./go-api/main.go
+		logEntry := CloudLog{
+			Severity:  "INFO",
+			RequestID: requestID,
+			Step:      "go-api-complete",
+			LatencyMs: duration,
+			IsSuccess: isSuccess,
+			CPUUsage:  cpuVal,
+			PodName:   podName,
+			Expected:  expectedText,
+			IsMatch:   isMatch,
+			Message:   fmt.Sprintf("OCR Processed by %s", podName),
+		}
+        ............
+        ............
+		// 標準出力をJSON化。Cloud Loggingはこれを自動解析してフィールド分割してくれる
+		logJSON, _ := json.Marshal(logEntry)
+		fmt.Println(string(logJSON))
+	})
+```
 
 
-## 3-5.ロギング対応(json)
-K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
-
-
-
-
-
-## 3-6.期待値比較
-
-K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
-
-
-
-
-
-
-
-
-
-------------------------------
-
-## 3-2.L7負荷分散とコネクションの維持
-K8s上でgRPCを動かす際の「一番のハマりどころ」に対する解決策を提示します。
-
-**・Round Robinの設定:**
-grpc.WithDefaultServiceConfig を使い、クライアント側でリクエストを分散させている点。これがないと特定のPodに通信が偏り、自動スケールの恩恵を受けられません。
-**・gRPC Keepalive:**
-keepalive.ClientParameters の設定。アイドル状態でも接続を維持し、Podが入れ替わっても即座に再接続する「粘り強さ」を解説します。
-
-## 3-3.観測性を高める「構造化ログ」とリクエスト追跡
-GKE（Cloud Logging）での運用を前提とした、実戦的なログ設計についてです。
-**・X-Correlation-ID による分散トレーシング:**
-HTTPヘッダーからIDを引き継ぎ、gRPCの metadata を通じてPython側へ伝播させる仕組み。「Goのログ」と「Pythonのログ」を紐付ける重要性を書きます。
-**・JSON形式の構造化ログ:**
-CloudLog 構造体。単なる文字列ではなくJSONで出力することで、Cloud Logging上で「CPU使用率50%以上のリクエスト」といった高度な検索・分析が可能になる点を紹介します。
-
-## 3-4.負荷試験を見据えた「合否判定」の組み込み
-ここがこのコードのユニークな点です。
-**・X-Expected-Text による自動検証:** 
-k6等から「この画像にはこの文字が入っているはず」という正解をヘッダーで送り、OCR結果と照合する仕組み。
-**・SLI/SLOへの活用:**
-単に「動いているか」だけでなく、「正しく読み取れているか（IsMatch）」をログに記録することで、リリース後の精度劣化をいち早く検知できるメリットを解説します。
-
-## 4-4.リソース使用率の可視化
-psutil を使い、推論直後のCPU使用率をログに記録しています。これにより、**「特定の画像サイズでCPUがスパイクしている」** といったボトルネックの特定や、HPA（Horizontal Pod Autoscaler）の閾値設定の判断材料として活用できます。
-
-
+## 3-7.全コード
+コード詳細は、こちらを参照して下さい。
 <details>
 <summary>./go/main.go</summary>
 
@@ -441,6 +414,63 @@ func main() {
 </details>
 
 
+# 4.推論サーバ(python)
+バックエンドのPython側では、 **EasyOCR** を使用した推論エンジンを構築しました。Go側と同様、gRPCを採用することで「通信」と「ロジック」を分離し、高負荷な処理を安定してこなす工夫を盛り込んでいます。
+
+## 4-1.gRPCによるリクエスト待ち受け
+Python側も .proto から生成されたコードを使用します。
+
+```python:./python-ocr/server.py
+class Predictor(pb2_grpc.PredictorServicer):
+    def Predict(self, request, context):
+        # ここがGoからのリクエストを受け取る「ハンドラ」
+        # request.image_data には既に画像バイナリが入っている
+        img = Image.open(io.BytesIO(request.image_data))
+
+```
+
+## 4-2.重いモデルのライフサイクル管理
+OCRエンジン（モデル）のロードには時間がかかります。リクエストのたびにロードするのではなく、**プロセスの起動時に一度だけロード**し、メモリ上に保持（ホットスタンバイ）させるのが鉄則です。
+
+```python:./python-ocr/server.py
+# サーバー起動時に一度だけ実行
+reader = easyocr.Reader(['en', 'ja'], gpu=False)
+```
+
+## 4-3.gRPC Connection Ageによる「負荷の再分散」
+GKE（L4ロードバランサー）環境下でgRPCを使う際、一度確立したコネクションが特定のPodに固定され続けてしまい、スケールアウトした新しいPodにリクエストが流れない「負荷の偏り」が発生します。これを防ぐため、 **サーバー側でコネクションの寿命をあえて制限** しています。
+
+```python:./python-ocr/server.py
+    # 接続の最大寿命を30秒に設定
+    server_options = [
+        ('grpc.max_connection_age_ms', 30000), # 30秒経ったら接続をリフレッシュさせる
+        ('grpc.max_connection_age_grace_ms', 5000),
+    ]
+```
+これによって、Go（クライアント）側は定期的に接続を再確立し、そのタイミングでK8sのService（kube-proxy）による適切な再負荷分散が行われます。
+
+
+## 4-4.分散トレーシングと構造化ログ
+システムの可観測性を高めるため、以下の工夫を行っています。
+
+**・コンテキストの抽出:** context.invocation_metadata() からIDを取得。
+**・構造化ログ:** Go側と同じフォーマットでJSONログを出力。Cloud Logging上で、一つのリクエストが「Go APIをいつ通り、Python側で何ミリ秒かかったか」を一気通貫で検索（分散トレース）できるようになります。
+
+
+```python:./python-ocr/server.py
+# Goから渡されたIDを取得し、処理時間やCPU使用率と共にJSON出力
+log_entry = {
+    "severity": "INFO",
+    "request_id": request_id, # これがGo側と一致する
+    "duration_ms": duration_ms,
+    "pod_name": POD_NAME,
+    "message": f"OCR completed: {result_text[:50]}..."
+}
+print(json.dumps(log_entry))
+```
+
+## 4-5.リソース使用率の可視化
+psutil を使い、推論直後のCPU使用率をログに記録しています。これにより、　**「特定の画像サイズでCPUがスパイクしている」** といったボトルネックの特定や、HPA（Horizontal Pod Autoscaler）の閾値設定の判断材料として活用できます。
 
 
 
@@ -572,10 +602,6 @@ gcloud container clusters get-credentials ocr-cluster --region asia-northeast1-a
 # Helmチャートをインストール
 helm install ocr-system ./chart
 ```
-
-
-
-
 
 
 
