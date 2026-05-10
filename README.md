@@ -1,7 +1,12 @@
 # 1.はじめに
-この記事では、Go言語による高速なAPI受付と、PythonのEasyOCRエンジンをgRPCで繋ぐ、スケーラブルなOCRバックエンド基盤を構築します。
+この記事では、Go言語による高速なAPI受付と、PythonのEasyOCRエンジンをgRPCで繋ぐ、スケーラブルなOCRバックエンド基盤を構築しました。
 単なるアプリケーションの実装に留まらず、Google Kubernetes Engine（GKE）上でのサイドカー構成を採用。
 この基盤構築に関する詳細な説明を行っています。
+全体の設計思想や背景については、まず以下の記事をご一読ください。
+**・設計ポイント解説：** [ポイント説明編]（リンク）
+また、この構成基盤の検証は、以下の記事でまとめています。
+**・負荷試験と性能分析：** [検証編]（リンク）
+
 
 | ◆構成 |
 |:---------------|
@@ -50,9 +55,8 @@
 
 ## 2-3. ディレクトリ構成
 インフラ管理（Terraform）コマンドで、デプロイできる以下の構成となっています。
-このデータセットは、GitHubレポジトリ登録しています。
+このデータセットは、[GitHubレポジトリ](https://github.com/wata123-t/go-python-easyocr-gke) に登録しています。
 
-https://github.com/wata123-t/AES-128_GitHub_Actions
 
 ```text
 .
@@ -103,12 +107,10 @@ graph TD
 ```
 ### <ins>_◆関係記事_</ins>
 
-本記事は、これまでの内容を自動化させるものとなります。
+本記事は、以下の内容にも関連しています。
 
 **・1.[【ハード・ソフト協調検証①】Verilog HDLによる暗号化回路(AES-128)の設計](https://qiita.com/watapy/items/cc216b77695b3435f2f5)**
-図の Verilog RTL の中身、ハードウェア設計の詳細について解説しています。
 
-これまでの内容を GitHub Actions と Terraform を使用して「プッシュ即検証・分析」が走るパイプラインの構築をしており、今回の記事で説明しています。
 
 
 # 3.APIサーバー(Go)
@@ -174,7 +176,7 @@ OSからのシグナルやエラーがない限り、プロセスを常駐させ
 隣接するコンテナ間であっても、予期せぬプロセスの瞬断は起こり得ます。
 
 **Time (60s):** 通信がない間も「生きてる？」と定期的に確認を送る間隔です。
-**Timeout (20s):** その確認に対して返事がない場合に「切断された」と判断するまでの時間です。
+**Timeout (20s):** 確認に対して返事がない場合に「切断された」と判断するまでの時間です。
 
 
 ```golang:./go-api/main.go
@@ -885,54 +887,121 @@ spec:
 </details>
 
 
-
-
-# 7.デプロイ手順
-本システムのコードは GitHub（[ここにURL]）に公開しています。以下の手順で、インフラの構築からアプリケーションのデプロイまでを再現可能です。
+# 7.デプロイ手順(k6テスト前の準備)
+本システムのコードは [GitHub](https://github.com/wata123-t/go-python-easyocr-gke) に公開しています。以下の手順で、インフラの構築からアプリケーションのデプロイまでを再現可能です。
 
 
 ## 7-1. インフラの構築 (Terraform)
 まず、GCP上にGKEクラスタやArtifact Registryを構築します。
+セキュリティ保護のため、プロジェクトID等を含む `terraform.tfvars` は GitHub に含めていません。以下の手順に従って、ご自身の環境に合わせたファイルを作成してください
+
+### 1. terraform.tfvars の作成
+
+`terraform`ディレクトリ直下に`terraform.tfvars`という名前でファイルを作成し、以下の内容を記述します。
+
+```hcl
+project_id = "あなたのGCPプロジェクトID"
+region     = "asia-northeast1"
+dataset_id = "log_dataset" # 任意の名前に変更可能
+```
+### 2. インフラのデプロイ
+準備ができたら、以下のコマンドでリソースを作成します。
 
 ```bash
 cd terraform
+
+# 初期化
 terraform init
+
+# 実行（内容を確認して 'yes' を入力）
 terraform apply
 ```
 
 
-## 7-2. イメージのビルドとプッシュ
+## 7-2. イメージのビルド・リネーム・プッシュ
 GoとPythonの各イメージをビルドし、Artifact Registryへプッシュします。
+以下のコマンドの `<PROJECT_ID>` 部分は、ご自身のGCPプロジェクトIDに置き換えて実行してください。
 
 ```bash
-# Artifact Registryへの認証
-gcloud auth configure-docker asia-northeast1-docker.pkg.dev
+# go-api, python-api のイメージをbuild
+docker-compose build
 
-# ビルドとプッシュ（例：Python）
-docker build -t asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/ocr-images/python-api:latest ./python-api
-docker push asia-northeast1-docker.pkg.dev/YOUR_PROJECT_ID/ocr-images/python-api:latest
+# Go-API にタグを付ける
+docker tag go-python-easyocr-gke-go-api asia-northeast1-docker.pkg.dev/<PROJECT_ID>/ocr-images/go-api:latest
+
+# Python-API にタグを付ける
+docker tag go-python-easyocr-gke-python-api asia-northeast1-docker.pkg.dev/<PROJECT_ID>/ocr-images/python-api:latest
+
+# GCP へのプッシュ（アップロード）
+docker push asia-northeast1-docker.pkg.dev/<PROJECT_ID>/ocr-images/go-api:latest
+docker push asia-northeast1-docker.pkg.dev/<PROJECT_ID>/ocr-images/python-api:latest
 ```
 
 
 ## 7-3. アプリケーションのデプロイ (Helm)
-Helmを使用して、K8sリソース（Deployment, Service, HPAなど）を一括デプロイします。
+Helmを使用して、K8sリソース（Deployment, Service, HPAなど）を一括デプロイします。以下のコマンドの `<PROJECT_ID>` 部分は、ご自身のプロジェクトIDに書き換えてください。
 
 ```bash
 # 接続先クラスタを切り替え
-gcloud container clusters get-credentials ocr-cluster --region asia-northeast1-a
+gcloud container clusters get-credentials ocr-cluster --zone asia-northeast1-a --project <PROJECT_ID>
 
-# Helmチャートをインストール
+# Helmチャートをインストール（リリース名を ocr-system として実行）
 helm install ocr-system ./chart
+
+# Podの起動確認（Running になるまで待ちます）
+kubectl get pods
+
+# Serviceの確認（外部IPが割り当てられているか確認）
+kubectl get svc
+
+# （参考）アプリケーションを削除する場合
+# helm uninstall ocr-system
 ```
+
+## 7-4. k6 テスト前の準備
+テストを実行する前に、接続先のIPアドレスの設定と、テスト用データの生成が必要です。
+
+### 1.接続先IPアドレスの設定
+GKE上のServiceに割り当てられた外部IPアドレスを、k6のスクリプトに反映させます。
+
+以下のコマンドで `go-api-service` の **EXTERNAL-IP** を確認します。
+```bash
+kubectl get svc
+```
+`./k6/script.js` の 24行目にあるIPアドレスを、確認したIPアドレスに書き換えます。
+
+```js
+// 修正前: const url = 'http://35.221.115.130:8080/predict';
+const url = 'http://<あなたのEXTERNAL-IP>:8080/predict';
+```
+
+### 2. テスト用画像の生成
+負荷試験に使用する画像（100枚）はリポジトリに含まれていないため、スクリプトで生成します。
+ディレクトリ`./k6`に移動してから以下の作業を実施して下さい。
+
+画像生成に必要なライブラリをインストールします。
+```bash
+pip install Pillow
+```
+生成スクリプトを実行します
+
+```bash
+python ./gen_image.py
+```
+
+実行後、`./test_images`ディレクトリに100枚の画像と、正解ラベルとなる`mapping.json`が作成されれば準備完了です。
 
 
 
 # 8.おわりに
-本記事では、GoとPython、そしてGKEを組み合わせた **「スケーラブルなOCR基盤」** の構築過程を解説しました。
-単に文字認識を行うだけでなく、
-**・gRPC**によるマイクロサービス間の高速通信
-**・Terraform**によるコードベースのインフラ管理
-**・Headless Service**を用いたK8s上での適切な負荷分散
-**・BigQuery**を見据えた構造化ログの設計
-といった、データエンジニアリングにおいて不可欠な「スケーラビリティ」と「観測性」を意識した設計を盛り込みました。
+本記事では、GoとPython、そしてGKEを組み合わせた **「スケーラブルなOCR基盤」** の詳細な設定やコマンドについて解説しました。
+本内容は、全体像を解説しているメイン記事の補足として、構築手順やコードの意図を詳しく掘り下げたものです。ここまでの内容を元に、ぜひ以下の実践編・検証編の記事もあわせてご参照ください。
 
+
+**・[スケーラブルなOCR基盤(Go×Python×EasyOCR×GKE)の構築](https://github.com/wata123-t/go-python-easyocr-gke)**
+→構築に関する重要なポイントをピックアップして説明しています。
+
+**・[スケーラブルなOCR基盤(Go×Python×EasyOCR×GKE)の検証](https://github.com/wata123-t/go-python-easyocr-gke)**
+→k6を用いた負荷試験の結果と、オートスケーリングの挙動について検証しています。
+
+これらの記事を組み合わせることで、より深く「スケーラブルなシステム」の実装について理解を深めていただけるはずです。
