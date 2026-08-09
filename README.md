@@ -65,17 +65,6 @@
 
 --------------------
 --------------------
---------------------
-### 2. 「デプロイ・通信」フェーズ（①〜⑤）
-
-![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/9242b0c1-940e-4f97-a674-610d6429b6a1.png)
-
-
-### 3. 「認証・セキュリティ」フェーズ（①〜⑤）
-
-![image.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/4239579/82529fbc-437d-4099-9b21-7c2b7ed1d5bc.png)
-
-
 
 # 3.APIサーバー(Go)
 
