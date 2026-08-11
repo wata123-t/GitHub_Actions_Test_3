@@ -351,6 +351,7 @@ resource "aws_iam_role_policy_attachment" "lb_controller" {
   role       = aws_iam_role.lb_controller.name
   policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
 }
+```
 
 ```text
 /////////////////////////////////////////////////////////////////
