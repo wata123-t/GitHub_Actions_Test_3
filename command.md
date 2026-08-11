@@ -1,7 +1,10 @@
+```text
 /////////////////////////////////////////////////////////////////
 // outpout.tf
 /////////////////////////////////////////////////////////////////
+```
 
+```hcl
 output "sqs_url" {
   value       = aws_sqs_queue.image_queue.id
   description = "後続処理で利用するAWS SQSキューのURL"
@@ -31,19 +34,27 @@ output "aws_load_balancer_controller_role_arn" {
   value       = aws_iam_role.lb_controller.arn
   description = "AWS Load Balancer Controllerに割り当てるIAMロールARN"
 }
+```
 
+```text
 /////////////////////////////////////////////////////////////////
 // providers.tf
 /////////////////////////////////////////////////////////////////
+```
 
+```hcl
 provider "aws" {
   region = "ap-northeast-1" # 東京リージョン
 }
+```
 
-
+```text
 /////////////////////////////////////////////////////////////////
 // main.tf
 /////////////////////////////////////////////////////////////////
+```
+
+```hcl
 # ----------------------------------------------------
 # データの保管と通信（S3バケット / SQSキュー）
 # ----------------------------------------------------
@@ -139,10 +150,15 @@ resource "aws_route_table_association" "public_2" {
   subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public_rt.id
 }
+```
 
+```text
 /////////////////////////////////////////////////////////////////
 // iam.tf
 /////////////////////////////////////////////////////////////////
+```
+
+```hcl
 # ----------------------------------------------------
 # A. Go/PythonアプリがSQSとS3にアクセスするための設定
 # ----------------------------------------------------
@@ -433,5 +449,5 @@ resource "aws_iam_openid_connect_provider" "eks" {
   thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
   url             = aws_eks_cluster.eks.identity[0].oidc[0].issuer
 }
-
+```
 
